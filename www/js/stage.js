@@ -101,7 +101,8 @@ function animate(){
   requestAnimationFrame(animate);
   const t = performance.now()/1000;
   if (charGroup){
-    charGroup.rotation.y += Math.sin(t*.55)*.0009; // gentle sway (relative)
+    // gentle sway: absolute, not cumulative (avoids long-session drift)
+    charGroup.rotation.y = (charGroup.userData.baseRotY||0) + Math.sin(t*.55)*.16;
     charGroup.position.y = Math.sin(t*1.7)*.045 + (charGroup.userData.baseY||0);
   }
   if (mixer) mixer.update(0.016);
@@ -112,8 +113,9 @@ function animate(){
 }
 
 function sizeStage(){
-  if (!wrap || !renderer) return;
+  if (!wrap || !renderer || !camera) return;
   let w = wrap.clientWidth, h = wrap.clientHeight;
+  if (!w || !h) return; // hidden (display:none) — skip, ResizeObserver will refire
   if (aspectMode==='9:16'){ h = w*16/9; } else { h = w*9/16; }
   h = Math.max(220, Math.min(h, 560));
   wrap.style.height = h+'px';
@@ -144,7 +146,13 @@ function setCharPos(preset){
 function disposeGroup(gr){
   gr.traverse(o=>{
     if (o.geometry) o.geometry.dispose();
-    if (o.material){ (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose()); }
+    if (o.material){
+      (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{
+        if (m.map) m.map.dispose();
+        if (m.emissiveMap) m.emissiveMap.dispose();
+        m.dispose();
+      });
+    }
   });
 }
 
@@ -207,13 +215,12 @@ RTS.Stage = {
             glbModel = gltf.scene;
             charGroup = new THREE.Group();
             charGroup.add(glbModel);
-            // normalize: scale to ~4 units tall
+            // normalize: scale to ~4 units tall, feet planted on the floor (y=-2.28)
             const box = new THREE.Box3().setFromObject(glbModel);
             const size = new THREE.Vector3(); box.getSize(size);
             const h = size.y||1, s = 4/h;
             glbModel.scale.setScalar(s);
-            const c = new THREE.Vector3(); box.getCenter(c);
-            glbModel.position.sub(c.multiplyScalar(s)); glbModel.position.y += 0; // recenter
+            glbModel.position.set(-box.min.x*s, -2.28 - box.min.y*s, -box.min.z*s);
             scene.add(charGroup);
             mixer = (gltf.animations && gltf.animations.length) ? new THREE.AnimationMixer(glbModel) : null;
             glbAnimations = gltf.animations||[];
@@ -248,6 +255,7 @@ RTS.Stage = {
     if (!charGroup) return;
     const p=cfg.pos||[0,0,0], r=cfg.rot||[0,0,0];
     charGroup.userData.baseX=p[0]; charGroup.userData.baseY=p[1];
+    charGroup.userData.baseRotY=r[1]||0;
     charGroup.position.set(p[0],p[1],p[2]);
     charGroup.rotation.set(r[0],r[1],r[2]);
     charGroup.scale.setScalar(cfg.scale||1);

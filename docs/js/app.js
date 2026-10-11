@@ -4,6 +4,16 @@
 
 const ORDER = ['home','character','scene','voice','timeline','export','settings'];
 let currentScreen = 'home';
+RTS.APP_VERSION_CODE = 1;
+RTS.ONLINE_URL = 'https://ruhvibes.github.io/ruhtoonstudio/';
+RTS.APK_URL = 'https://github.com/Ruhvibes/ruhtoonstudio/releases/download/v1/RuhToonStudio.apk';
+
+function updateNetDot(){
+  const d = document.querySelector('#netDot'); if(!d) return;
+  const on = navigator.onLine !== false;
+  d.textContent = on ? '🟢' : '🔴';
+  d.title = RTS.t(on ? 'net_online' : 'net_offline');
+}
 
 function buildTabbar(){
   const bar = document.querySelector('#tabbar');
@@ -30,6 +40,7 @@ function applyI18n(){
 
 RTS.go = function(id){
   if (!RTS.Screens[id]) id='home';
+  if (id!==currentScreen && typeof RTS.stopTimeline==='function'){ try{ RTS.stopTimeline(); }catch(e){} }
   currentScreen=id;
   applyI18n();
   const s=RTS.Screens[id];
@@ -76,7 +87,37 @@ async function boot(){
   if('serviceWorker' in navigator && location.protocol.indexOf('http')===0){
     navigator.serviceWorker.register('./sw.js').catch(()=>{});
   }
+  // online/offline indicator
+  updateNetDot(); applyI18n();
+  window.addEventListener('online', updateNetDot);
+  window.addEventListener('offline', updateNetDot);
 }
+
+RTS.checkForUpdates = async function(statusEl){
+  const set = (k)=>{ if(statusEl) statusEl.textContent = RTS.t(k); };
+  set('set_update_checking');
+  try{
+    const ctrl = new AbortController();
+    const to = setTimeout(()=>ctrl.abort(), 15000);
+    const res = await fetch('https://raw.githubusercontent.com/Ruhvibes/ruhtoonstudio/main/version.json?t='+Date.now(), {signal:ctrl.signal, cache:'no-store'});
+    clearTimeout(to);
+    if(!res.ok) throw new Error('http-'+res.status);
+    const j = await res.json();
+    const remote = parseInt(j.versionCode||0, 10);
+    if(remote > RTS.APP_VERSION_CODE){
+      if(statusEl){
+        statusEl.innerHTML='';
+        const b=document.createElement('button');
+        b.className='btn primary'; b.textContent=RTS.t('set_update_available')+' '+RTS.t('set_update_apk');
+        b.addEventListener('click',()=>window.open(RTS.APK_URL,'_blank'));
+        statusEl.appendChild(b);
+      }
+      return 'available';
+    }
+    set('set_update_latest');
+    return 'latest';
+  }catch(e){ set('set_update_error'); return 'error'; }
+};
 
 if (document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();

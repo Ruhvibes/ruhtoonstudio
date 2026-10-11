@@ -56,12 +56,13 @@ async function applyProjectToStage(){
   const p = RTS.Project.current(); if(!p) return;
   const sc = activeScene();
   const ch = p.character;
-  // character (glb needs asset -> object URL)
+  // character (glb needs asset -> object URL; revoke the previous one)
+  if (RTS._glbUrl){ try{ URL.revokeObjectURL(RTS._glbUrl); }catch(e){} RTS._glbUrl=null; }
   let cfg = Object.assign({}, ch);
   if (ch.mode==='glb' && ch.glbAssetId){
     try{
       const a = await RTS.DB.getAsset(ch.glbAssetId);
-      if (a && a.blob){ cfg.glbUrl = URL.createObjectURL(a.blob); }
+      if (a && a.blob){ cfg.glbUrl = URL.createObjectURL(a.blob); RTS._glbUrl = cfg.glbUrl; }
       else { cfg.mode='procedural'; }
     }catch(e){ cfg.mode='procedural'; }
   }
@@ -271,7 +272,7 @@ function renderVoice(el){
     [['en-US','English (US)'],['en-IN','English (India)'],['hi-IN','Hindi']].map(o=>h('option',{value:o[0],text:o[1]})));
   langSel.value=v.lang||'en-US';
   el.appendChild(label(RTS.t('voice_language'), langSel));
-  const voiceSel=h('select',{on:{change:()=>{}}});
+  const voiceSel=h('select',{on:{change:()=>{ v.voiceIndex = voiceSel.value==='' ? null : parseInt(voiceSel.value,10); upd(); }}});
   el.appendChild(label(RTS.t('voice_voice'), voiceSel));
   function loadVoices(){
     voiceSel.innerHTML='';
@@ -280,6 +281,7 @@ function renderVoice(el){
       if(!v.lang || vc.lang===v.lang || vc.lang.indexOf(v.lang.slice(0,2))===0)
         voiceSel.appendChild(h('option',{value:String(i),text:vc.name+' ('+vc.lang+')'}));
     });
+    if (v.voiceIndex!=null) voiceSel.value=String(v.voiceIndex);
   }
   loadVoices();
   if (RTS.TTS.supported()){ try{ speechSynthesis.onvoiceschanged=loadVoices; }catch(e){} }
@@ -288,7 +290,7 @@ function renderVoice(el){
   const pvRow=row();
   pvRow.appendChild(btn(RTS.t('voice_preview'), ()=>{
     if(!RTS.TTS.supported()){ alert(RTS.t('voice_nosupport')); return; }
-    const vi = voiceSel.value==='' ? null : parseInt(voiceSel.value,10);
+    const vi = v.voiceIndex!=null ? v.voiceIndex : (voiceSel.value==='' ? null : parseInt(voiceSel.value,10));
     RTS.Stage.setSpeaking(true, .5);
     RTS.TTS.speak(v.dialogue, {lang:v.lang, rate:v.rate, pitch:v.pitch, voiceIndex:vi,
       onend:()=>RTS.Stage.setSpeaking(false,0), onerror:()=>RTS.Stage.setSpeaking(false,0)});
@@ -306,7 +308,10 @@ function renderVoice(el){
       recBtn.disabled=true; stopBtn.disabled=false;
       recStatus.textContent=RTS.t('voice_recording');
     }catch(e){
-      recStatus.textContent = (e && e.name==='NotAllowedError') ? RTS.t('voice_mic_denied') : (e.message||RTS.t('err_generic'));
+      const n = e && e.name;
+      recStatus.textContent = (n==='NotAllowedError'||n==='SecurityError') ? RTS.t('voice_mic_denied')
+        : (n==='NotFoundError'||n==='OverconstrainedError') ? RTS.t('voice_mic_nodevice')
+        : (e.message||RTS.t('err_generic'));
     }
   },'danger');
   const stopBtn=btn(RTS.t('voice_rec_stop'), async ()=>{
@@ -332,8 +337,9 @@ function renderVoice(el){
   el.appendChild(impRow);
 
   function setWorkAudio(blob, name){
+    if (RTS._workAudioUrl){ try{ URL.revokeObjectURL(RTS._workAudioUrl); }catch(e){} RTS._workAudioUrl=null; }
     RTS._workAudio = blob?{blob:blob, name:name||'audio'}:null;
-    if(blob){ const u=URL.createObjectURL(blob); audioEl.src=u; }
+    if(blob){ const u=URL.createObjectURL(blob); RTS._workAudioUrl=u; audioEl.src=u; }
     else audioEl.removeAttribute('src');
     volSlider.disabled=!blob; trimApply.disabled=!blob; addClipBtn.disabled=!blob;
   }
@@ -381,6 +387,7 @@ function renderVoice(el){
     const clip=RTS.Project.newClip('tts');
     const sc=activeScene(); clip.sceneId=sc?sc.id:null;
     clip.text=v.dialogue||''; clip.lang=v.lang; clip.rate=v.rate; clip.pitch=v.pitch;
+    clip.voiceIndex=(v.voiceIndex!=null?v.voiceIndex:null);
     clip.expression=p.character.expression||'happy';
     p.clips.push(clip); RTS.Project.markDirty();
     toast(RTS.t('voice_clip_added'));
@@ -431,6 +438,11 @@ RTS.bufferToWavBlob=bufferToWavBlob;
 
 /* ================= TIMELINE ================= */
 let tlPlaying=false, tlStopFlag=false;
+RTS.stopTimeline = function(){
+  tlStopFlag=true;
+  try{ RTS.TTS.cancel(); }catch(e){}
+  try{ RTS.Stage.setSpeaking(false,0); }catch(e){}
+};
 function renderTimeline(el){
   const p=RTS.Project.current(); el.innerHTML='';
   if(!p){ el.appendChild(h('p',{class:'hint',text:RTS.t('home_empty')})); return; }
@@ -516,7 +528,7 @@ function renderTimeline(el){
         if(keys.length) applyKf();
         if(clip.kind==='tts'){
           RTS.Stage.setSpeaking(true,.5);
-          await RTS.TTS.speak(clip.text||'',{lang:clip.lang||'en-US',rate:clip.rate||1,pitch:clip.pitch||1});
+          await RTS.TTS.speak(clip.text||'',{lang:clip.lang||'en-US',rate:clip.rate||1,pitch:clip.pitch||1,voiceIndex:(clip.voiceIndex!=null?clip.voiceIndex:null)});
           RTS.Stage.setSpeaking(false,0);
         } else if(clip.audioId){
           const asset=await RTS.DB.getAsset(clip.audioId).catch(()=>null);
@@ -631,8 +643,11 @@ function renderExport(el){
       stream=canvas.captureStream(30);
       let combined=stream;
       if(audioBuffer){
-        const dest=RTS.LipSync._ensure().createMediaStreamDestination();
+        const actx = RTS.LipSync._ensure();
+        if(!actx) throw new Error('Web Audio unavailable');
+        const dest=actx.createMediaStreamDestination();
         player=RTS.Mixer.playToStream(audioBuffer, dest);
+        if(!player) throw new Error('Web Audio unavailable');
         combined=new MediaStream(stream.getVideoTracks().concat(dest.stream.getAudioTracks()));
       } else {
         RTS.Stage.setSpeaking(true,.4);
@@ -686,6 +701,13 @@ function renderSettings(el){
   el.appendChild(tokInp);
   el.appendChild(h('p',{class:'hint',text:RTS.t('set_hf_hint')}));
   el.appendChild(btn(RTS.t('saved'), ()=>{ RTS.AI.setToken(tokInp.value.trim()); toast(RTS.t('set_hf_saved')); },'secondary'));
+  // Online
+  el.appendChild(h('h3',{text:RTS.t('set_online_title')}));
+  el.appendChild(h('p',{class:'hint',text:RTS.t('set_online_hint')}));
+  el.appendChild(btn('🌐 '+RTS.t('set_online_open'), ()=>{ window.open(RTS.ONLINE_URL,'_blank'); },'secondary'));
+  const upStatus=h('p',{class:'status',text:''});
+  el.appendChild(btn('🔄 '+RTS.t('set_check_update'), ()=>{ RTS.checkForUpdates(upStatus); },'secondary'));
+  el.appendChild(upStatus);
   el.appendChild(h('h3',{text:RTS.t('set_about')}));
   el.appendChild(h('p',{class:'hint',text:RTS.t('set_about_text')}));
   el.appendChild(h('h3',{text:RTS.t('set_help')}));

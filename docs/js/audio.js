@@ -172,6 +172,7 @@ const Mixer = {
     const src = ctx.createBufferSource(); src.buffer=audioBuffer;
     const analyser = ctx.createAnalyser(); analyser.fftSize=512;
     src.connect(analyser); analyser.connect(streamDest);
+    try{ analyser.connect(ctx.destination); }catch(e){} // user hears it during export too
     // also drive mouth
     const data=new Uint8Array(analyser.fftSize);
     let alive=true;

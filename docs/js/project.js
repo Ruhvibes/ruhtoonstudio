@@ -13,6 +13,39 @@ function defaultCharacter(){
 function defaultScene(i){
   return { id:uid(), name:'Scene '+(i+1), bg:'sky', camera:'medium', charPos:'center', duration:5 };
 }
+// Repair a project loaded from storage: fill missing/broken fields so the UI never crashes.
+function sanitize(p){
+  if (!p || typeof p!=='object') return null;
+  if (!p.id) p.id = uid();
+  if (typeof p.name!=='string') p.name = 'Untitled';
+  if (!p.character || typeof p.character!=='object') p.character = defaultCharacter();
+  const c = p.character;
+  if (typeof c.skin!=='string') c.skin='#ffc58f';
+  if (typeof c.shirt!=='string') c.shirt='#7c5cff';
+  if (typeof c.hair!=='string') c.hair='#3a2a1a';
+  if (typeof c.expression!=='string') c.expression='happy';
+  if (!Array.isArray(c.pos)) c.pos=[0,0,0];
+  if (!Array.isArray(c.rot)) c.rot=[0,0,0];
+  if (typeof c.scale!=='number') c.scale=1;
+  if (!Array.isArray(p.scenes) || !p.scenes.length) p.scenes=[defaultScene(0)];
+  p.scenes.forEach((s,i)=>{
+    if (!s || typeof s!=='object'){ p.scenes[i]=defaultScene(i); return; }
+    if (typeof s.bg!=='string') s.bg='sky';
+    if (typeof s.camera!=='string') s.camera='medium';
+    if (typeof s.charPos!=='string') s.charPos='center';
+    if (typeof s.duration!=='number') s.duration=5;
+  });
+  if (typeof p.activeScene!=='number' || p.activeScene<0 || p.activeScene>=p.scenes.length) p.activeScene=0;
+  if (!Array.isArray(p.clips)) p.clips=[];
+  p.clips.forEach(cl=>{
+    if (!cl || typeof cl!=='object') return;
+    if (!Array.isArray(cl.keys)) cl.keys=[];
+    if (typeof cl.volume!=='number') cl.volume=1;
+  });
+  if (!p.voice || typeof p.voice!=='object') p.voice={ dialogue:'Hello!', lang:'en-US', rate:1, pitch:1 };
+  if (typeof p.exportAspect!=='string') p.exportAspect='16:9';
+  return p;
+}
 function blankProject(name){
   return { id:uid(), name:name||'Untitled', updatedAt:Date.now(),
     character:defaultCharacter(), scenes:[defaultScene(0)], activeScene:0,
@@ -46,8 +79,14 @@ const P = {
   },
   async open(id){
     await P.persistCurrent();
-    const p = await RTS.DB.getProject(id);
-    if (p){ current=p; try{localStorage.setItem('rts_current', id);}catch(e){} }
+    let p = await RTS.DB.getProject(id);
+    p = sanitize(p);
+    if (p){
+      current=p;
+      try{localStorage.setItem('rts_current', id);}catch(e){}
+      // persist the repaired shape so it doesn't re-trigger
+      saveNow().catch(()=>{});
+    }
     return current;
   },
   async persistCurrent(){ if (current && dirty) await saveNow(); },
@@ -101,7 +140,11 @@ const P = {
   // Autosave recovery: last current project id
   async recover(){
     let id=null; try{ id=localStorage.getItem('rts_current'); }catch(e){}
-    if (id){ const p=await RTS.DB.getProject(id); if(p){ current=p; return {recovered:true, project:p}; } }
+    if (id){
+      let p=await RTS.DB.getProject(id);
+      p=sanitize(p);
+      if(p){ current=p; return {recovered:true, project:p}; }
+    }
     return {recovered:false};
   },
   newClip(kind){

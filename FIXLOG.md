@@ -63,3 +63,40 @@ Test: export with 1s audio clip completes, download offered. PASS.
 - MP4 not in v1 (per spec).
 - Long exports hold the video in memory; fine for short clips (phone use-case).
 - Real-mic and on-device APK behaviors (permission dialog, saveVideo, file chooser) need Hasnain's phone test — parent to build + deliver APK.
+
+---
+
+## Audit #2 — "Both inbuilt" + full fix check (2026-10-11)
+
+Hasnain: "internet wala bhi APK me inbuilt karo, full fix check har jagah se."
+
+### Part 1 — Online integration ("both inbuilt")
+1. **Online status indicator**: 🟢/🔴 dot in header (`#netDot`), driven by `navigator.onLine` + online/offline event listeners (`app.js: updateNetDot`). Verified green online, red on offline event.
+2. **"Open Online Version"** in Settings → `window.open('https://ruhvibes.github.io/ruhtoonstudio/')` (shareable link).
+3. **"Check for Updates"** in Settings → fetches `https://raw.githubusercontent.com/Ruhvibes/ruhtoonstudio/main/version.json`, compares `versionCode` vs `RTS.APP_VERSION_CODE=1`. Shows "latest" / "new version available" (button → APK download) / honest offline error. `version.json` created at repo root and verified live.
+4. Zero external requests when offline — verified: only user-initiated actions (update check, HF TTS) ever hit network.
+
+### Part 2 — Bugs found & fixed
+1. **sw.js was STALE (would break online version)**: cached `./style.css` + `./app.js` which no longer exist → install would fail on GitHub Pages. Rewrote with real file list (`css/main.css`, all `js/*`, libs, manifest), cache `ruhtoon-v2`, `skipWaiting` + `clients.claim`, fetch falls back gracefully.
+2. **Character rotation drift**: `animate()` did `rotation.y += sin(...)*0.0009` every frame → slow random spin over long sessions. Fixed to absolute sway `rotation.y = baseRotY + sin(t*.55)*.16` with `baseRotY` stored by `applyTransform`.
+3. **GLB models floated above floor**: old code centered model at origin (feet at y=-2, floor at -2.28). Fixed: `position.set(-min.x*s, -2.28-min.y*s, -min.z*s)` → feet planted on floor.
+4. **Object URL leaks**: `setWorkAudio` and `applyProjectToStage` created blob URLs without revoking. Now tracked (`RTS._workAudioUrl`, `RTS._glbUrl`) and revoked before replacement.
+5. **Texture leak on character switch**: `disposeGroup` didn't dispose textures. Added `map`/`emissiveMap` disposal.
+6. **`sizeStage` NaN guard**: when stageWrap hidden (`display:none`), `clientWidth=0` → `camera.aspect=0` → broken projection. Now skips when w/h is 0 (ResizeObserver refires on show).
+7. **Export crash when Web Audio unavailable**: `RTS.LipSync._ensure().createMediaStreamDestination()` would throw TypeError on null. Added null guard with honest error.
+8. **Voice selection not persisted**: voice `<select>` change did nothing; TTS clips didn't store voice. Now `voice.voiceIndex` saved to project, carried into clips, used in preview + timeline playback.
+9. **Timeline kept playing after screen change**: `tlPlaying`/`tlStopFlag` module-level; navigating away left audio/TTS running. Added `RTS.stopTimeline()` (sets flag + cancels TTS + stops mouth), called from `RTS.go` on screen change.
+10. **Raw mic errors too technical**: `getUserMedia` "Requested device not found" shown verbatim. Added `voice_mic_nodevice` friendly string for `NotFoundError`/`OverconstrainedError` (EN+HI).
+11. **Corrupt projects showed generic error**: added `sanitize()` in `project.js` — repairs null character, broken scenes/clips/voice on `open()` and `recover()`, persists repaired shape. Verified: fully-broken project (`character:null, scenes:'xx'`) opens and character editor renders.
+12. **manifest.json `theme_color`** mismatched index.html (`#111827` vs `#1a1040`) → fixed to `#1a1040`.
+13. **Export audio now audible during export**: `playToStream` also connects analyser → `ctx.destination` (previously only to recording stream).
+
+### Verification
+- `node --check` clean on all 9 JS files.
+- All `RTS.t()` keys (125 used) exist in EN+HI; all `querySelector('#…')` targets exist in index.html (`#dlAnchor` dynamically created, verified).
+- **ONLINE: 39/39 PASS** — 7 screens, project CRUD, character/scene/voice/timeline/export/settings, net dot 🟢, HF token save, update-check logic (latest + new-version paths via mocked fetch), Hindi toggle, duplicate/delete, GLB valid+invalid, 0 unexpected external requests, 0 JS errors.
+- **OFFLINE: 39/39 PASS** — network fully blocked: all core features work, net dot 🔴 on offline event, update check degrades honestly, 0 JS errors.
+- Valid GLB (`tri.glb`) loads; invalid URL rejects honestly; sanitize repairs corrupt projects.
+
+## Sync
+`www/` → `docs/` synced (docs/ is the GitHub Pages source). APK build left to parent.
