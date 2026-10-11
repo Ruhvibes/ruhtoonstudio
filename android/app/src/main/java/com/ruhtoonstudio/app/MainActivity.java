@@ -30,6 +30,7 @@ import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.Toast;
 
+import androidx.activity.ComponentActivity;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 
@@ -38,7 +39,7 @@ import java.io.OutputStream;
 /** RuhToon Studio — WebView wrapper for the offline 3D cartoon studio.
  *  Mic via onPermissionRequest, audio import via file chooser,
  *  WebM export via window.Android.saveVideo bridge. */
-public class MainActivity extends Activity {
+public class MainActivity extends ComponentActivity {
     private WebView web;
     private PermissionRequest pendingPermissionRequest;
     private ValueCallback<Uri[]> filePathCallback;
